@@ -1,0 +1,46 @@
+name: Update V2Nodes Subscriptions
+
+on:
+  schedule:
+    - cron: '0 */3 * * *'  # اجرا هر ۳ ساعت یک‌بار
+  workflow_dispatch:        # دکمه اجرای دستی
+
+permissions:
+  contents: write
+
+jobs:
+  update-nodes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Fetch and Test Configs
+        run: |
+          python update_v2nodes.py
+
+      - name: Commit and Push Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add subs/ tested_configs.db
+          if git diff --cached --quiet; then
+            echo "تغییر جدیدی وجود ندارد."
+          else
+            git commit -m "🔄 Update V2Nodes Subscriptions [$(date -u +'%Y-%m-%d %H:%M:%S UTC')]"
+            git pull --rebase origin main
+            git push origin main
+          fi
