@@ -15,8 +15,7 @@ from bs4 import BeautifulSoup
 # ==================== تنظیمات ====================
 BASE_URL = "https://www.v2nodes.com"
 
-# کدهای کشورهایی که مایل به دریافت کانفیگ آن‌ها هستید
-# می‌توانید کشورها را کم یا زیاد کنید
+# لیست کشورهای هدف برای استخراج
 TARGET_COUNTRIES = [
     "us", "de", "fr", "nl", "gb", "ca", "sg", "jp", 
     "kr", "tr", "fi", "se", "ch", "it", "es", "pl", "ae"
@@ -25,121 +24,16 @@ TARGET_COUNTRIES = [
 OUTPUT_DIR = "subs"
 DB_FILE = "tested_configs.db"
 TEST_URL = "http://www.gstatic.com/generate_204"
-TEST_TIMEOUT = 1.5           # مهلت تست پینگ (ثانیه)
-MAX_TEST_PER_COUNTRY = 40    # حداکثر تعداد تست برای هر کشور در هر اجرا
-EXPIRY_HOURS = 12            # مدت زمان انقضای کش در دیتابیس
-MAX_FAILURES = 2             # تعداد دفعات مجاز عدم پاسخ قبل از حذف
+TEST_TIMEOUT = 2.0           # حداکثر مهلت پاسخ‌دهی تست اتصال (ثانیه)
+MAX_TEST_PER_COUNTRY = 60    # حداکثر تعداد کانفیگ جدید برای تست در هر کشور
+EXPIRY_HOURS = 12            # مدت زمان ماندگاری کانفیگ در کش
+MAX_FAILURES = 2             # دفعات مجاز عدم پاسخ قبل از حذف از دیتابیس
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
 }
-
-# ==================== فیلترهای ضد اختلال شبکه ====================
-def is_invalid_sni(s):
-    if not s:
-        return False
-    s = s.lower().strip()
-    
-    # مسدودسازی استفاده از آی‌پی به جای دامنه
-    if re.match(r"^(\d{1,3}\.){3}\d{1,3}$", s):
-        return True
-        
-    bad_domains = [
-        "workers.dev", "pages.dev", "fastly.net", "ndjp.net", "ccwu.cc",
-        "chickenkiller.com", "09vpn.com", "gamelistak.com", "boobie.eu.cc",
-        "pink-perfect.ru", "stardevs.top", "ziqiyun.xyz", "rooster465.autos",
-        "myfymain.com", "fromblancwithlove.com", "octopusss", "picassooo.info",
-        "mammad.shop", "g9q.fun", "rainzone.ir", "samanehha.co", "s3-cloud.xyz",
-        "ignorelist.com", "solid-dev1.online", "twilightparadox.com", "bexum.fun",
-        "cgiproxy", "connectv.net", "cnae.top", "9889888.xyz", "cfvip.lol",
-        "sajadi.lol", "ir"
-    ]
-    return any(bd in s for bd in bad_domains)
-
-def is_burned_reality_sni(s):
-    s = s.lower().strip()
-    burned = [
-        "yahoo", "microsoft", "cloudflare", "sony", "apple", "icloud",
-        "amazon", "max.ru", "vk-portal", "deepl", "tradingview", "yandex",
-        "mozilla", "vk.com", "speedtest", "zoom.us", "google", "ya.ru",
-        "alibaba", "kinopoisk", "vk.ru", "sberbank", "ebay", "asus.com"
-    ]
-    return any(b in s for b in burned)
-
-def is_iran_friendly_config(link):
-    try:
-        CF_TLS_PORTS = {443, 2053, 2083, 2087, 8443, 2096}
-        CF_HTTP_PORTS = {80, 8080, 8880, 2052, 2082, 2086, 2095}
-
-        # تروجان مسدود است
-        if link.startswith("trojan://"):
-            return False
-
-        if link.startswith("vmess://"):
-            b64 = link[8:]
-            b64 += "=" * ((4 - len(b64) % 4) % 4)
-            decoded = json.loads(base64.b64decode(b64).decode("utf-8"))
-            port = int(decoded.get("port", 443))
-            net = decoded.get("net", "tcp")
-            tls = decoded.get("tls", "")
-            sni = decoded.get("sni", "")
-            host = decoded.get("host", "")
-
-            if net == "tcp" and tls != "tls":
-                return False
-            if tls != "tls" and port not in CF_HTTP_PORTS:
-                return False
-            if tls == "tls" and port not in CF_TLS_PORTS:
-                return False
-            if is_invalid_sni(sni) or is_invalid_sni(host):
-                return False
-            return True
-
-        elif link.startswith("ss://"):
-            parsed = urlparse(link)
-            port = parsed.port
-            if not port or port == 443:
-                return False
-            if port not in CF_HTTP_PORTS and port not in [8443, 2053]:
-                return False
-            return True
-
-        elif link.startswith("vless://"):
-            parsed = urlparse(link)
-            port = parsed.port if parsed.port else 443
-            params = parse_qs(parsed.query)
-
-            security = params.get("security", [""])[0]
-            fp = params.get("fp", [""])[0]
-            pbk = params.get("pbk", [""])[0]
-            sni = params.get("sni", [""])[0]
-            host = params.get("host", [""])[0]
-
-            actual_sni = sni or host or parsed.hostname
-            if is_invalid_sni(actual_sni):
-                return False
-
-            if security not in ["tls", "reality"]:
-                return False
-
-            # بررسی اثر انگشت معتبر
-            if fp not in ["chrome", "firefox", "edge", "safari", "ios"]:
-                return False
-
-            if security == "reality":
-                if not pbk or is_burned_reality_sni(actual_sni):
-                    return False
-            elif security == "tls":
-                if port not in CF_TLS_PORTS:
-                    return False
-
-            return True
-
-    except Exception:
-        return False
-    return False
 
 # ==================== پایگاه داده ====================
 def init_db():
@@ -186,17 +80,15 @@ def get_cached_for_country(country):
     conn.close()
     return {r[0]: r for r in rows}
 
-def get_all_cached():
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT config_hash, country, real_delay FROM tested_configs ORDER BY real_delay ASC")
-    rows = c.fetchall()
-    conn.close()
-    return rows
+# ==================== استخراج بدون فیلتر از V2Nodes ====================
+def is_valid_protocol_link(link):
+    """صرفاً بررسی ساختار اولیه پروتکل بدون اعمال فیلتر کیفی"""
+    if not link or not isinstance(link, str):
+        return False
+    return any(link.startswith(proto) for proto in ["vless://", "vmess://", "ss://", "trojan://"])
 
-# ==================== استخراج از سایت V2Nodes ====================
 def fetch_country_configs(country_code):
-    """استخراج لینک سابسکریپشن و دانلود کانفیگ‌های هر کشور"""
+    """استخراج تمامی کانفیگ‌های کشور بدون فیلترهای محدودکننده"""
     country_url = f"{BASE_URL}/country/{country_code}/"
     session = requests.Session()
     session.headers.update(HEADERS)
@@ -208,7 +100,7 @@ def fetch_country_configs(country_code):
             print(f"⚠️ خطای {resp.status_code} در دریافت صفحه {country_code}")
             return []
 
-        # استخراج آدرس اشتراک دارای کلید داینامیک
+        # ۱. تلاش برای یافتن لینک اشتراک داینامیک
         sub_link_match = re.search(r'https?://[^\s"\'<>]+/subscriptions/country/[^"\'\s<>]+', resp.text)
         sub_url = None
         if sub_link_match:
@@ -222,11 +114,10 @@ def fetch_country_configs(country_code):
                     break
 
         if sub_url:
-            print(f"   ↳ لینک اشتراک پیدا شد: {sub_url[:60]}...")
+            print(f"   ↳ لینک اشتراک: {sub_url[:65]}...")
             sub_resp = session.get(sub_url, timeout=15)
             if sub_resp.status_code == 200:
                 raw_text = sub_resp.text.strip()
-                # بررسی اینکه آیا پاسخ Base64 است یا متنی
                 try:
                     padded = raw_text + "=" * ((4 - len(raw_text) % 4) % 4)
                     decoded_text = base64.b64decode(padded).decode("utf-8", errors="ignore")
@@ -236,18 +127,17 @@ def fetch_country_configs(country_code):
 
                 for line in lines:
                     line = line.strip()
-                    if any(line.startswith(p) for p in ["vless://", "vmess://", "ss://", "trojan://"]):
-                        if is_iran_friendly_config(line):
-                            found_configs.add(line)
+                    if is_valid_protocol_link(line):
+                        found_configs.add(line)
 
-        # در صورت عدم دریافت از سابسکریپشن، استخراج مستقیم از متن صفحه
+        # ۲. استخراج تمام لینک‌های پروتکل از متن HTML صفحه به عنوان مکمل
         page_matches = re.findall(r'(?:vless|vmess|ss|trojan)://[^\s"\'<>]+', resp.text)
         for link in page_matches:
-            if is_iran_friendly_config(link):
+            if is_valid_protocol_link(link):
                 found_configs.add(link)
 
     except Exception as e:
-        print(f"⚠️ خطا در پردازش کشور {country_code}: {e}")
+        print(f"⚠️ خطا در دریافت اطلاعات کشور {country_code}: {e}")
 
     return list(found_configs)
 
@@ -312,7 +202,9 @@ def parse_link_to_outbound(link):
             parsed = urlparse(link)
             is_vless = link.startswith("vless://")
             protocol = "vless" if is_vless else "trojan"
-            settings = {"vnext": [{"address": parsed.hostname, "port": parsed.port, "users": [{"id": parsed.username, "encryption": "none", "flow": ""}]}]} if is_vless else {"servers": [{"address": parsed.hostname, "port": parsed.port, "password": parsed.username}]}
+            
+            port = parsed.port if parsed.port else 443
+            settings = {"vnext": [{"address": parsed.hostname, "port": port, "users": [{"id": parsed.username, "encryption": "none", "flow": ""}]}]} if is_vless else {"servers": [{"address": parsed.hostname, "port": port, "password": parsed.username}]}
 
             params = parse_qs(parsed.query)
             def gp(k, d=""): return params.get(k, [d])[0]
@@ -340,6 +232,10 @@ def parse_link_to_outbound(link):
                 outbound["streamSettings"]["wsSettings"] = {"path": path, "headers": {"Host": host} if host else {}}
             elif network == "tcp" and header_type == "http":
                 outbound["streamSettings"]["tcpSettings"] = {"header": {"type": "http", "request": {"headers": {"Host": host} if host else {}, "path": [path]}}}
+            elif network == "grpc":
+                outbound["streamSettings"]["grpcSettings"] = {"serviceName": path.lstrip("/"), "multiMode": False}
+            elif network in ["xhttp", "httpupgrade"]:
+                outbound["streamSettings"][f"{network}Settings"] = {"path": path, "host": host}
 
             if security == "tls":
                 tls_settings = {"serverName": sni, "allowInsecure": gp("allowInsecure", "0") == "1"}
@@ -374,7 +270,7 @@ def test_single_config(xray_bin, link, timeout=TEST_TIMEOUT):
     xray_proc = None
     try:
         xray_proc = subprocess.Popen([xray_bin, "run", "-c", config_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(2)
+        time.sleep(1.8)
 
         res = subprocess.run(
             ["curl", "-s", "-o", "/dev/null", "-w", "%{time_total}",
@@ -398,21 +294,21 @@ def test_single_config(xray_bin, link, timeout=TEST_TIMEOUT):
         try: os.unlink(config_path)
         except: pass
 
-# ==================== تابع اصلی ====================
+# ==================== اجرای اصلی ====================
 def main():
     init_db()
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    print("📥 در حال دانلود Xray-core...")
+    print("📥 دانلود هسته Xray...")
     xray_bin = download_xray()
-    print("✅ Xray-core آماده شد.\n")
+    print("✅ هسته Xray آماده شد.\n")
 
     all_valid_configs = []
 
     for country in TARGET_COUNTRIES:
         print(f"🌍 بررسی کشور [{country.upper()}]...")
         raw_configs = fetch_country_configs(country)
-        print(f"   ↳ {len(raw_configs)} کانفیگ پس از فیلتر اولیه پیدا شد.")
+        print(f"   ↳ {len(raw_configs)} کانفیگ خام دریافت شد.")
 
         cached_country = get_cached_for_country(country)
         valid_country_configs = dict(cached_country)
@@ -429,31 +325,30 @@ def main():
             else:
                 print(f"   [{i}/{len(to_test)}] ❌ {short}")
 
-        # مرتب‌سازی بر اساس کمترین تاخیر
+        # مرتب‌سازی بر اساس کمترین پینگ
         sorted_links = [l for l, _ in sorted(valid_country_configs.items(), key=lambda x: x[1])]
-        
-        # ذخیره فایل Base64 مخصوص این کشور
+
         if sorted_links:
             country_file = os.path.join(OUTPUT_DIR, f"{country}.txt")
             encoded_content = base64.b64encode("\n".join(sorted_links).encode("utf-8")).decode("utf-8")
             with open(country_file, "w", encoding="utf-8") as f:
                 f.write(encoded_content)
             all_valid_configs.extend(sorted_links)
-            print(f"   💾 {len(sorted_links)} کانفیگ سالم در {country_file} ذخیره شد.\n")
+            print(f"   💾 {len(sorted_links)} کانفیگ فعال در {country_file} ذخیره شد.\n")
         else:
-            print(f"   ⚠️ هیچ کانفیگ سالمی برای {country.upper()} ثبت نشد.\n")
+            print(f"   ⚠️ کانفیگ فعالی برای {country.upper()} یافت نشد.\n")
 
-    # ذخیره فایل تجمیعی تمام کشورها
-    unique_all = list(set(all_valid_configs))
+    # ذخیره فایل تجمیعی همه کشورها
+    unique_all = list(dict.fromkeys(all_valid_configs))
     if unique_all:
         all_file = os.path.join(OUTPUT_DIR, "all.txt")
         all_encoded = base64.b64encode("\n".join(unique_all).encode("utf-8")).decode("utf-8")
         with open(all_file, "w", encoding="utf-8") as f:
             f.write(all_encoded)
-        print(f"📦 فایل تجمیعی تمام کشورها با {len(unique_all)} کانفیگ در {all_file} ذخیره شد.")
+        print(f"📦 فایل تجمیعی با {len(unique_all)} کانفیگ در {all_file} ذخیره شد.")
 
     shutil.rmtree(os.path.dirname(xray_bin), ignore_errors=True)
-    print("\n🏁 عملیات با موفقیت به پایان رسید.")
+    print("\n🏁 فرآیند با موفقیت پایان یافت.")
 
 if __name__ == "__main__":
     main()
